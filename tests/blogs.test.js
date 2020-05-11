@@ -2,12 +2,16 @@ const mongoose = require('mongoose')
 const supertest = require('supertest')
 const app = require('../app')
 const Blog = require('../models/blog')
+const User = require('../models/user')
 const helper = require('./test_helper')
+const jwt = require('jsonwebtoken')
+const bcrypt = require('bcrypt')
 
 const api = supertest(app)
 
 beforeEach(async () => {
   await Blog.deleteMany({})
+  await User.deleteMany({})
 
   let blogObject = new Blog(helper.initialBlogs[0])
   await blogObject.save()
@@ -30,12 +34,27 @@ describe('when there is initially some notes saved', () => {
   })
 })
 
-describe('addition of a new note', () => {
+describe('addition of a new blog', () => {
   test('succeeds with valid data', async () => {
+    const saltRounds = 10
+    const password = 'B.L.U.E.D.E.M.O.N.R.O.C.K.S.'
+    const passwordHash = await bcrypt.hash(password, saltRounds)
+    const user = new User({
+      username: 'bdemon',
+      name: 'Blue Demon',
+      passwordHash,
+    })
+    const savedUser = await user.save()
     const newBlog = helper.initialBlogs[2]
-
+    newBlog.user = savedUser._id
+    const userForToken = {
+      username: savedUser.username,
+      id: savedUser._id,
+    }
+    const token = jwt.sign(userForToken, process.env.SECRET)
     await api
       .post('/api/blogs')
+      .set('Authorization', `bearer ${token}`)
       .send(newBlog)
       .expect(201)
       .expect('Content-Type', /application\/json/)
@@ -46,8 +65,16 @@ describe('addition of a new note', () => {
     const title = blogsAtEnd.map(b => b.title)
     expect(title).toContain(newBlog.title)
   })
+  test('fails without token', async () => {
+    const newBlog = helper.initialBlogs[2]
+    await api
+      .post('/api/blogs')
+      .send(newBlog)
+      .expect(401)
+      .expect('Content-Type', /application\/json/)
+  })
 })
-describe('update of an existing note', () => {
+describe('update of an existing blog', () => {
   test('succeeds with valid data', async () => {
     const blogsAtStart = await helper.blogsInDb()
     const blogToUpdate = blogsAtStart[0]
@@ -65,13 +92,36 @@ describe('update of an existing note', () => {
   })
 })
 
-describe('deletion of a note', () => {
+describe('deletion of a blog', () => {
   test('succeeds with valid data', async () => {
+    const saltRounds = 10
+    const password = 'B.L.U.E.D.E.M.O.N.R.O.C.K.S.'
+    const passwordHash = await bcrypt.hash(password, saltRounds)
+    const user = new User({
+      username: 'bdemon',
+      name: 'Blue Demon',
+      passwordHash,
+    })
+    const savedUser = await user.save()
+    const blog = helper.initialBlogs[2]
+    const blogToDelete = new Blog({
+      title: blog.title,
+      author: blog.author,
+      url: blog.url,
+      likes: blog.likes === undefined ? 0 : blog.likes,
+      user: savedUser._id
+    })
+    await blogToDelete.save()
     const blogsAtStart = await helper.blogsInDb()
-    const blogToDelete = blogsAtStart[0]
 
+    const userForToken = {
+      username: savedUser.username,
+      id: savedUser._id,
+    }
+    const token = jwt.sign(userForToken, process.env.SECRET)
     await api
       .delete(`/api/blogs/${blogToDelete.id}`)
+      .set('Authorization', `bearer ${token}`)
       .expect(204)
 
     const blogsAtEnd = await helper.blogsInDb()
